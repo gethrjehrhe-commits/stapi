@@ -1,9 +1,4 @@
 #!/usr/bin/env python3
-"""
-Stripe Checker API — Flask wrapper
-Deploy on Render → get URL → call from Telegram bot.
-"""
-
 import os
 import json
 import re
@@ -45,23 +40,17 @@ def normalize_status(raw_status: str, raw_response: str):
 
     if "3d" in low or "authentication" in low or "otp" in low or "verify" in low:
         return "3DS", _clean_msg(raw_response)
-
     if s == "approved" or "succeeded" in low or "card added successfully" in low or \
        ("success" in low and "decline" not in low):
         return "APPROVED", _clean_msg(raw_response)
-
     if "charged" in low or "order placed" in low:
         return "CHARGED", _clean_msg(raw_response)
-
     if "decline" in low:
         return "DECLINED", _clean_msg(raw_response)
-
     if s == "declined":
         return "DECLINED", _clean_msg(raw_response)
-
     if s == "error" or "error" in low:
         return "ERROR", _clean_msg(raw_response)
-
     return ("APPROVED" if s == "approved" else "DECLINED"), _clean_msg(raw_response)
 
 
@@ -95,9 +84,9 @@ def stripe_check():
     else:
         payload = request.args.to_dict()
 
-    raw_cc  = payload.get("cc") or payload.get("card") or ""
-    site    = (payload.get("site") or "").strip()
-    proxy   = (payload.get("proxy") or "").strip() or None
+    raw_cc = payload.get("cc") or payload.get("card") or ""
+    site = (payload.get("site") or "").strip()
+    proxy = (payload.get("proxy") or "").strip() or None
     chat_id = payload.get("chat_id") or None
 
     card = normalize_card(raw_cc)
@@ -120,7 +109,7 @@ def stripe_check():
 
     site = site.replace("https://", "").replace("http://", "").rstrip("/")
 
-    # If no proxy given, try global proxies.txt on the API server
+    # If no proxy sent, try proxies.txt on API server
     if not proxy:
         try:
             pf = os.path.join(os.path.dirname(os.path.abspath(__file__)), "proxies.txt")
@@ -140,7 +129,7 @@ def stripe_check():
             ccx=card,
             chat_id=chat_id,
             use_registration=True,
-            received_proxy=proxy      # can be None — checker now handles that
+            received_proxy=proxy
         )
     except Exception as e:
         return jsonify({
@@ -157,13 +146,13 @@ def stripe_check():
     )
 
     return jsonify({
-        "status":   final_status,
+        "status": final_status,
         "response": clean_response,
-        "cc":       card,
-        "site":     site,
-        "gateway":  "Stripe Auth",
-        "price":    "$0",
-        "time":     elapsed,
+        "cc": card,
+        "site": site,
+        "gateway": "Stripe Auth",
+        "price": "$0",
+        "time": elapsed,
     })
 
 
@@ -224,9 +213,9 @@ def root():
     return jsonify({
         "name": "Stripe Checker API",
         "endpoints": {
-            "check":  "/stripe?cc=CC|MM|YY|CVV&site=example.com&proxy=ip:port:user:pass",
-            "sites":  "/sites",
-            "add":    "POST /addsite {site}",
+            "check": "/stripe?cc=CC|MM|YY|CVV&site=example.com",
+            "sites": "/sites",
+            "add": "POST /addsite {site}",
             "remove": "POST /removesite {site}",
             "health": "/health",
         }
