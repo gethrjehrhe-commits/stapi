@@ -49,7 +49,11 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
  
 _HERE     = os.path.dirname(os.path.abspath(__file__))
-_BOT_ROOT = os.path.dirname(os.path.dirname(_HERE))
+# _BOT_ROOT: when app.py and stripe_checker.py share the same directory (Replit
+# flat layout), _BOT_ROOT == _HERE.  When the checker lives at
+# api/stripe/stripe_checker.py inside a bot tree, set it two levels up.
+# Auto-detect: if app.py is in the same dir, stay here; else go up two levels.
+_BOT_ROOT = _HERE if os.path.exists(os.path.join(_HERE, 'app.py'))             else os.path.dirname(os.path.dirname(_HERE))
  
 # Nonce length bounds — WP sha256 nonces are 10 hex chars but some plugins
 # produce up to 40.  Hard-capping at 12 silently dropped valid nonces.
@@ -1297,3 +1301,4 @@ def check_sites_from_file(file_path: str, chat_id=None, received_proxy=None,
                 out['errors'].append(f"{d}: {str(e)[:100]}")
  
     return out
+ 
